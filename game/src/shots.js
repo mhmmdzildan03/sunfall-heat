@@ -1,79 +1,54 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+// Deterministic screenshot scenes for Sunfall Heat: ?shot=start|drive|chase|mission&seed=N
+export function parseShot() {
+  const q = new URLSearchParams(location.search);
+  const shot = q.get('shot');
+  const seed = parseInt(q.get('seed') || '1', 10) || 1;
+  return { shot, seed, active: !!shot };
 }
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+export function setupShotScene(G, shot) {
+  const p = G.player;
+  if (shot === 'start') {
+    G.state = 'title';
+    p.x = 1080; p.y = 980; G.cam.x = p.x - 640; G.cam.y = p.y - 360;
+  } else if (shot === 'drive') {
+    G.state = 'playing';
+    const car = G.traffic[0];
+    car.x = 1080; car.y = 934; car.angle = 0; car.parked = false; car.color = '#e63946'; car.w = 48; car.h = 22;
+    p.inCar = car; car.stolen = true;
+    G.objective = 'Jelajahi Sunfall City — Marina Strip di selatan!';
+    let i = 0;
+    for (const c of G.traffic) { if (c === car) continue; i++; if (i <= 6) { c.x = 1080 + (i % 2 ? 160 + i * 60 : -180 - i * 55); c.y = i % 2 ? 866 : 934; c.angle = i % 2 ? Math.PI : 0; c.parked = false; } }
+    for (let k = 0; k < 8 && k < G.peds.length; k++) { G.peds[k].x = 980 + k * 32; G.peds[k].y = 812 + (k % 2) * 8; }
+    G.cam.x = car.x - 640; G.cam.y = car.y - 360;
+  } else if (shot === 'chase') {
+    G.state = 'playing';
+    const car = G.traffic[1];
+    car.x = 1740; car.y = 1460; car.angle = 0; car.parked = false; car.color = '#e63946'; car.w = 48; car.h = 22;
+    p.inCar = car; car.stolen = true;
+    G.wanted.stars = 3; G.wanted.heat = 95;
+    G.objective = 'Kabur dari polisi! Hilangkan bintang wanted';
+    G.policeCars = G.spawnCops(3, car);
+    G.policeCars[0].x = 1600; G.policeCars[0].y = 1426; G.policeCars[0].angle = 0.15;
+    G.policeCars[1].x = 1615; G.policeCars[1].y = 1498; G.policeCars[1].angle = -0.1;
+    G.policeCars[2].x = 1875; G.policeCars[2].y = 1462; G.policeCars[2].angle = Math.PI;
+    G.officers = G.spawnOfficers(2, car);
+    G.officers[0].x = 1690; G.officers[0].y = 1398;
+    G.officers[1].x = 1805; G.officers[1].y = 1530;
+    let i = 0;
+    for (const c of G.traffic) { if (c === car) continue; i++; if (i <= 5) { c.x = 1740 + i * 110 - 200; c.y = 1392 + (i % 2) * 130; c.angle = i % 2 ? 0 : Math.PI; c.parked = false; } }
+    for (let k = 0; k < 6 && k < G.peds.length; k++) { G.peds[k].x = 1620 + k * 36; G.peds[k].y = 1350; G.peds[k].flee = 80; }
+    G.cam.x = car.x - 640; G.cam.y = car.y - 360;
+  } else if (shot === 'mission') {
+    G.state = 'playing';
+    p.x = 1352; p.y = 1212; p.inCar = null;
+    G.startMissionByIndex(0);
+    G.mission.phase = 'steal';
+    G.dialogText = 'Dewi: Curi mobilnya, antar ke dermaga Harbor Point. Jangan sampai rusak!';
+    G.objective = 'First Wheels: Curi Sport Toska di Old Market';
+    const spot = G.traffic.find(c => c.parked && Math.abs(c.x - 1400) < 6 && Math.abs(c.y - 1150) < 6) || G.traffic.find(c => c.parked) || G.traffic[2];
+    spot.x = 1400; spot.y = 1150; spot.color = '#06d6a0'; spot.parked = true; spot.w = 48; spot.h = 22; spot.angle = 0;
+    for (let k = 0; k < 6 && k < G.peds.length; k++) { G.peds[k].x = 1230 + k * 30; G.peds[k].y = 1005 + (k % 3) * 22; }
+    G.cam.x = p.x - 640; G.cam.y = p.y - 400;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  G.frozen = true;
 }
